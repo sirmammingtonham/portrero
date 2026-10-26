@@ -1,0 +1,103 @@
+name: Release
+
+# Push a version tag to publish a release:
+#   git tag v1.0.0 && git push origin v1.0.0
+# Tags with a suffix (v1.1.0-beta.1) are published as pre-releases.
+#
+# Optional secrets — without them the app is ad-hoc signed and users have to approve it on
+# first launch (the release notes explain how):
+#   MACOS_CERTIFICATE           base64-encoded "Developer ID Application" .p12
+#   MACOS_CERTIFICATE_PASSWORD  password for that .p12
+#   CODESIGN_IDENTITY           e.g. "Developer ID Application: Jane Doe (TEAMID1234)"
+#   NOTARY_APPLE_ID             Apple ID used for notarization
+#   NOTARY_TEAM_ID              10-character team ID
+#   NOTARY_PASSWORD             app-specific password for that Apple ID
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: macos-26
+    env:
+      MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      CODESIGN_IDENTITY: ${{ secrets.CODESIGN_IDENTITY }}
+      NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+      NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
+      NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # build number = commit count
+
+      - name: Read version from tag
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+
+      - name: Import signing certificate
+        if: env.MACOS_CERTIFICATE != ''
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 24)"
+          echo "$MACOS_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/certificate.p12" -k "$KEYCHAIN" \
+            -P "$MACOS_CERTIFICATE_PASSWORD" -f pkcs12 -A -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+          # Add to the search list, keeping the existing keychains (one word each, so split on purpose).
+          # shellcheck disable=SC2046
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          rm "$RUNNER_TEMP/certificate.p12"
+
+      - name: Test
+        run: scripts/test.sh
+
+      - name: Build
+        run: scripts/build.sh --universal --version "$VERSION"
+
+      - name: Package
+        run: scripts/package.sh
+
+      - name: Write release notes
+        run: |
+          {
+            echo "## Install"
+            echo
+            echo "1. Download **Portrero-$VERSION.dmg** below, open it and drag Portrero to Applications."
+            if [[ -n "$NOTARY_APPLE_ID" ]]; then
+              echo "2. Open Portrero and click **Make Default** in Settings → General."
+            else
+              echo "2. Open Portrero. This build isn't notarized, so macOS blocks it the first time:"
+              echo "   open **System Settings → Privacy & Security**, scroll down and click **Open Anyway**."
+              echo "   (Or run \`xattr -dr com.apple.quarantine /Applications/Portrero.app\` in Terminal.)"
+              echo "3. Click **Make Default** in Settings → General."
+            fi
+            echo
+            echo "Requires macOS 14 Sonoma or later. Universal: Apple silicon and Intel."
+            echo
+            echo "SHA-256 checksums are in \`Portrero-$VERSION.sha256\`."
+            echo
+          } > build/release-notes.md
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PRERELEASE=()
+          [[ "$VERSION" == *-* ]] && PRERELEASE=(--prerelease)
+          gh release create "$GITHUB_REF_NAME" \
+            "build/Portrero-$VERSION.dmg" \
+            "build/Portrero-$VERSION.zip" \
+            "build/Portrero-$VERSION.sha256" \
+            --title "Portrero $VERSION" \
+            --notes-file build/release-notes.md \
+            --generate-notes \
+            --verify-tag \
+            ${PRERELEASE[@]+"${PRERELEASE[@]}"}
