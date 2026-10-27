@@ -12,6 +12,7 @@
   <a href="https://github.com/sirmammingtonham/portrero/releases/latest"><img src="https://img.shields.io/github/v/release/sirmammingtonham/portrero?label=download&color=4f6df5" alt="Latest release"></a>
   <a href="https://github.com/sirmammingtonham/portrero/actions/workflows/ci.yml"><img src="https://github.com/sirmammingtonham/portrero/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <img src="https://img.shields.io/badge/macOS-14%2B-lightgrey" alt="macOS 14 or later">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="MIT license"></a>
 </p>
 
 ---
@@ -182,3 +183,7 @@ scripts                Build, package, test and debug helpers
 Portrero never connects to the internet. It reads browser profile lists from each browser's own
 files in `~/Library/Application Support`, and stores its settings in
 `~/Library/Application Support/Portrero/config.json`.
+
+## License
+
+[MIT](LICENSE)
